@@ -1,0 +1,5 @@
+D1 Test Results
+1. Mininet pingall: passed, 0% dropped .
+2. HIGH UDP: port 5004; client sent 100 packets; server received 100; flow priority 100 verified previously.
+3. MEDIUM UDP: port 5001; client sent 100 packets; server received 100; switch flow priority 50 verified.
+4. LOW/default UDP: port 5007; client sent 100 packets; switch flow priority 10 verified (flow counter showed 99 packets; server receive total not confirmed).
