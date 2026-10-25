@@ -57,10 +57,12 @@ class QoSController(app_manager.RyuApp):
         flow_priority = 10
 
         if ip_pkt and udp_pkt:
-            if udp_pkt.dst_port in (5004, 5005):
-                traffic_class, flow_priority = "HIGH", 100
-            elif udp_pkt.dst_port in (5001, 5002, 5003):
-                traffic_class, flow_priority = "MEDIUM", 50
+          if udp_pkt.dst_port == 5001:
+              traffic_class, flow_priority = "HIGH", 100
+          elif udp_pkt.dst_port == 5002:
+              traffic_class, flow_priority = "MEDIUM", 50        
+          elif udp_pkt.dst_port == 5003:
+              traffic_class, flow_priority = "LOW", 10
 
         self.packet_counts[traffic_class] += 1
         self.logger.info("QoS class=%s flow_priority=%s counts=%s",
