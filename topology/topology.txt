@@ -1,0 +1,7 @@
+Member 2 — Mininet topology and baseline testing
+
+The topology is a dumbbell: hosts h1, h2, and h3 connect to switch s1, and server host h4 connects to switch s2. The s1–s2 link is shared by all three flows, so it is the congestion bottleneck.
+
+Access links are configured at 100 Mbps with 1 ms delay. The default bottleneck is 10 Mbps with 10 ms delay and a 100-packet queue. Random loss defaults to 0%, so packet loss in the overloaded test comes from congestion and queue drops.
+
+In baseline mode, the switches run without an SDN controller. The test script checks host connectivity, idle round-trip time, one UDP flow below the bottleneck capacity, and three simultaneous UDP flows whose combined offered rate exceeds it.
