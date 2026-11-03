@@ -1,0 +1,8 @@
+D1 tests | mode=baseline | bottleneck=10Mbps/10ms
+T1 pingall packet loss: 0.0% -> PASS
+T2 idle RTT h1->h4: min/avg/max/mdev = 25.047/26.722/28.311/1.172 ms
+T3 single flow @8.0Mbps (below capacity): 8.39 Mbits/s received, 0.0% loss
+T4 3 flows @7.0Mbps each (~21Mbps offered):
+h1: 3.37 Mbits/s, 54% loss
+h2: 3.10 Mbits/s, 57% loss
+h3: 3.21 Mbits/s, 56% loss
