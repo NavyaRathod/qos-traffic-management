@@ -14,6 +14,7 @@ At the Mininet prompt, check connectivity:
 `pingall`
 
 ## Topology and Test
+Merge Member 2 Mininet topology and D1 test documentation.
 Topology: Mininet h1-s1-h2, OpenFlow 1.3, Ryu controller.
 Connectivity test: pingall passed.
 UDP test : client sent 100 packets to h2 port 5004; server received 100 packets (1900 bytes).
