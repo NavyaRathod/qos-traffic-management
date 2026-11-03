@@ -1,4 +1,0 @@
-Mininet topology: h1 -- s1 -- h2
-Switch: Open vSwitch, OpenFlow 1.3
-controller: Ryu at 127.0.0.1:6633
-Start command: sudo mn --switch ovs,protocols=OpenFlow13 --controller=remote,ip=127.0.0.1,port=6633
