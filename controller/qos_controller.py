@@ -3,15 +3,31 @@ from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, set_ev_cls
 from ryu.ofproto import ofproto_v1_3
 from ryu.lib.packet import packet, ethernet, ipv4, udp
+from ryu.lib import hub
+import time
 
 
 class QoSController(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
+    HIGH_PORT = 5001
+    MEDIUM_PORT = 5002
+    LOW_PORT = 5003
+
+    # Set to match the Mininet topology's bottleneck bandwidth.
+    BOTTLENECK_BPS = 10_000_000
+    CONGESTION_ON = 0.80
+    CONGESTION_OFF = 0.60
+    STATS_INTERVAL = 3
+
     def __init__(self, *args, **kwargs):
         super(QoSController, self).__init__(*args, **kwargs)
         self.mac_to_port = {}
         self.packet_counts = {"HIGH": 0, "MEDIUM": 0, "LOW": 0}
+        self.port_stats = {}
+        self.congested = {}
+        self.datapaths = {}
+        self.monitor_thread = hub.spawn(self._monitor)
 
     def add_flow(self, datapath, priority, match, actions, buffer_id=None):
         ofproto = datapath.ofproto
@@ -27,12 +43,66 @@ class QoSController(app_manager.RyuApp):
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
         datapath = ev.msg.datapath
-        ofproto = datapath.ofproto
+        self.datapaths[datapath.id] = datapath
         parser = datapath.ofproto_parser
+        ofproto = datapath.ofproto
         self.add_flow(
             datapath, 0, parser.OFPMatch(),
             [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
                                     ofproto.OFPCML_NO_BUFFER)])
+
+    @set_ev_cls(ofp_event.EventOFPStateChange,
+                [MAIN_DISPATCHER, CONFIG_DISPATCHER])
+    def state_change_handler(self, ev):
+        datapath = ev.datapath
+        if ev.state == MAIN_DISPATCHER:
+            self.datapaths[datapath.id] = datapath
+        elif ev.state == "DEAD_DISPATCHER":
+            self.datapaths.pop(datapath.id, None)
+
+    def _monitor(self):
+        while True:
+            for datapath in list(self.datapaths.values()):
+                parser = datapath.ofproto_parser
+                req = parser.OFPPortStatsRequest(
+                    datapath, 0, datapath.ofproto.OFPP_ANY)
+                datapath.send_msg(req)
+            hub.sleep(self.STATS_INTERVAL)
+
+    @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
+    def port_stats_reply_handler(self, ev):
+        datapath = ev.msg.datapath
+        dpid = datapath.id
+        now = time.time()
+        for stat in ev.msg.body:
+            key = (dpid, stat.port_no)
+            previous = self.port_stats.get(key)
+            self.port_stats[key] = (now, stat.tx_bytes, stat.rx_bytes)
+            if previous is None:
+                continue
+
+            old_time, old_tx, old_rx = previous
+            elapsed = now - old_time
+            if elapsed <= 0:
+                continue
+
+            # Estimate each port's transmitted rate. On this dumbbell
+            # topology the bottleneck is the inter-switch link. The logs
+            # expose utilization; adjust BOTTLENECK_BPS for custom --bw.
+            tx_rate = max(0, stat.tx_bytes - old_tx) * 8 / elapsed
+            utilization = tx_rate / self.BOTTLENECK_BPS
+
+            # Use hysteresis to avoid rapid toggling.
+            if not self.congested.get(dpid, False) and utilization >= self.CONGESTION_ON:
+                self.congested[dpid] = True
+                self.logger.warning(
+                    "CONGESTION detected: switch=%s port=%s utilization=%.1f%%",
+                    dpid, stat.port_no, utilization * 100)
+            elif self.congested.get(dpid, False) and utilization <= self.CONGESTION_OFF:
+                self.congested[dpid] = False
+                self.logger.info(
+                    "CONGESTION cleared: switch=%s port=%s utilization=%.1f%%",
+                    dpid, stat.port_no, utilization * 100)
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def packet_in_handler(self, ev):
@@ -57,16 +127,18 @@ class QoSController(app_manager.RyuApp):
         flow_priority = 10
 
         if ip_pkt and udp_pkt:
-          if udp_pkt.dst_port == 5001:
-              traffic_class, flow_priority = "HIGH", 100
-          elif udp_pkt.dst_port == 5002:
-              traffic_class, flow_priority = "MEDIUM", 50        
-          elif udp_pkt.dst_port == 5003:
-              traffic_class, flow_priority = "LOW", 10
+            if udp_pkt.dst_port == self.HIGH_PORT:
+                traffic_class, flow_priority = "HIGH", 100
+            elif udp_pkt.dst_port == self.MEDIUM_PORT:
+                traffic_class, flow_priority = "MEDIUM", 50
+            elif udp_pkt.dst_port == self.LOW_PORT:
+                traffic_class, flow_priority = "LOW", 10
 
         self.packet_counts[traffic_class] += 1
-        self.logger.info("QoS class=%s flow_priority=%s counts=%s",
-                         traffic_class, flow_priority, self.packet_counts)
+        self.logger.info(
+            "QoS class=%s priority=%s counts=%s congestion=%s",
+            traffic_class, flow_priority, self.packet_counts,
+            self.congested.get(dpid, False))
 
         if eth.ethertype == 0x0806:
             out_port = ofproto.OFPP_FLOOD
@@ -77,9 +149,13 @@ class QoSController(app_manager.RyuApp):
         actions = [parser.OFPActionOutput(out_port)]
         fields = {"in_port": in_port, "eth_dst": eth.dst}
         if ip_pkt and udp_pkt:
-            fields.update({"eth_type": 0x0800, "ip_proto": 17,
-                           "ipv4_src": ip_pkt.src, "ipv4_dst": ip_pkt.dst,
-                           "udp_dst": udp_pkt.dst_port})
+            fields.update({
+                "eth_type": 0x0800,
+                "ip_proto": 17,
+                "ipv4_src": ip_pkt.src,
+                "ipv4_dst": ip_pkt.dst,
+                "udp_dst": udp_pkt.dst_port,
+            })
         match = parser.OFPMatch(**fields)
 
         if ip_pkt and udp_pkt:
@@ -88,6 +164,7 @@ class QoSController(app_manager.RyuApp):
             self.add_flow(datapath, flow_priority, match, actions, buffer_id)
 
         data = msg.data if msg.buffer_id == ofproto.OFP_NO_BUFFER else None
-        out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
-                                  in_port=in_port, actions=actions, data=data)
+        out = parser.OFPPacketOut(
+            datapath=datapath, buffer_id=msg.buffer_id,
+            in_port=in_port, actions=actions, data=data)
         datapath.send_msg(out)

@@ -1,0 +1,23 @@
+{
+  "controller": {"ip": "127.0.0.1", "of_port": 6653, "rest": "http://127.0.0.1:8080"},
+  "network": {
+    "bottleneck_mbps": 10,
+    "server_delay_ms": 5,
+    "queue_min_share": [0.35, 0.25, 0.20, 0.20]
+  },
+  "control": {"poll_interval_s": 1.0, "congestion_threshold": 0.9},
+  "run_time_s": 45,
+  "classes": [
+    {"name": "voip",       "port": 5001, "size": 160,  "rate_kbps": 64,   "start_s": 0,  "duration_s": 40, "realtime": true,  "priority": 1},
+    {"name": "video",      "port": 5002, "size": 1200, "rate_kbps": 3000, "start_s": 0,  "duration_s": 40, "realtime": true,  "priority": 2},
+    {"name": "file_large", "port": 5003, "size": 1400, "rate_kbps": 6000, "start_s": 0,  "total_bytes": 20000000, "priority": 4},
+    {"name": "file_small", "port": 5004, "size": 1400, "rate_kbps": 4000, "start_s": 5,  "total_bytes": 3000000,  "priority": 3},
+    {"name": "file_med",   "port": 5005, "size": 1400, "rate_kbps": 4000, "start_s": 15, "total_bytes": 8000000,  "priority": 3}
+  ],
+  "experiments": [
+    {"name": "baseline",       "schedule": [{"t": 0, "policy": "none"}]},
+    {"name": "static",         "schedule": [{"t": 0, "policy": "static"}]},
+    {"name": "srtf",           "schedule": [{"t": 0, "policy": "srtf"}]},
+    {"name": "dynamic_switch", "schedule": [{"t": 0, "policy": "none"}, {"t": 10, "policy": "static"}, {"t": 22, "policy": "srtf"}]}
+  ]
+}

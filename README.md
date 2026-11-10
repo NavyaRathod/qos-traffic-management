@@ -27,3 +27,7 @@ Then run the client on h1: h1 python3 /home/student/qos-traffic-management/app/c
 Repeat with PORT 5004 (HIGH, priority 100), 5001 (MEDIUM priority 50), and 5007 (LOW/default, priority 10).
 Inspent installed rules: sh ovs-ofctl -O OpenFlow13 dump-flows s1
 Controller mapping: UDP 5004-5005 HIGH (100); 5001-5003 MEDIUM (50); other UDP LOW (10).
+cat >> REANDME.md << 'EOF'
+## Deliverable 2: Dynamic QoS with SRTF
+Random traffic classes and destination ports, automatic flow discovery in the Ryu controller,congestion-aware policies (none / static / SRTF) switchable at runtime via REST, and automated analysis.
+See `deliverable2/README.md`.
