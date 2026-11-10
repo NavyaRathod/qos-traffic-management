@@ -13,6 +13,8 @@ from mininet.log import info, setLogLevel
 from mininet.net import Mininet
 from mininet.node import OVSSwitch, RemoteController
 
+from generator import generate_classes, offered_mbps, rules_from_profiles
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRV_IP = '10.0.0.100'
 WIRE = 42
@@ -67,7 +69,8 @@ def run_experiment(cfg, exp, outdir, hosts, srv):
             wire_total = math.ceil(c['total_bytes'] / c['size']) * (c['size'] + WIRE)
         flows.append({'name': c['name'], 'port': c['port'], 'priority': c.get('priority', 4),
                       'realtime': c.get('realtime', False), 'total_wire_bytes': wire_total})
-    api(base, 'POST', '/qos/flows', {'flows': flows})
+    if cfg['control'].get('discovery', 'auto') == 'preregister':
+        api(base, 'POST', '/qos/flows', {'flows': flows})
 
     json.dump({'experiment': exp['name'], 'schedule': exp['schedule'], 'classes': classes,
                'bottleneck_mbps': cfg['network']['bottleneck_mbps'], 'run_time_s': cfg['run_time_s']},
@@ -112,6 +115,8 @@ def main():
     ap.add_argument('--only', help='run only this experiment name')
     ap.add_argument('--bottleneck', type=float, help='override bottleneck Mbps')
     ap.add_argument('--run-time', type=float, help='override run time (s)')
+    ap.add_argument('--flows', type=int, help='number of random flows (enables the generator)')
+    ap.add_argument('--seed', type=int, help='random seed for the generator')
     ap.add_argument('--cli', action='store_true', help='open Mininet CLI instead of running experiments')
     a = ap.parse_args()
     cfg = json.load(open(a.config))
@@ -119,6 +124,30 @@ def main():
         cfg['network']['bottleneck_mbps'] = a.bottleneck
     if a.run_time:
         cfg['run_time_s'] = a.run_time
+
+    g = cfg.get('generator', {})
+    if a.flows:
+        g['enabled'], g['num_flows'] = True, a.flows
+    if a.seed is not None:
+        g['seed'] = a.seed
+    if g.get('enabled'):
+        cfg['classes'] = generate_classes(g, cfg['run_time_s'])
+        rules = rules_from_profiles(g['profiles'])
+    else:
+        rules = [{'name': c['name'], 'ports': [c['port'], c['port']], 'priority': c.get('priority', 4),
+                  'realtime': c.get('realtime', False)} for c in cfg['classes']]
+    rules = cfg.get('class_rules') or rules
+    os.makedirs(a.out, exist_ok=True)
+    json.dump(cfg['classes'], open(os.path.join(a.out, 'generated_classes.json'), 'w'), indent=2)
+    print('\nTraffic classes for this run (%d flows):' % len(cfg['classes']))
+    for c in cfg['classes']:
+        print('  %-14s port=%-5d size=%-5d rate=%-5d kbps start=%ss %s' % (
+            c['name'], c['port'], c['size'], c['rate_kbps'], c.get('start_s', 0),
+            ('total=%d B' % c['total_bytes']) if c.get('total_bytes') else 'continuous'))
+    load = offered_mbps(cfg['classes'])
+    print('Offered load if all overlap: %.1f Mbps vs bottleneck %.1f Mbps' % (load, cfg['network']['bottleneck_mbps']))
+    if load < 1.2 * cfg['network']['bottleneck_mbps']:
+        print('WARNING: little congestion expected - use more --flows or a lower --bottleneck')
 
     setLogLevel('info')
     net, s1, up, srv, hosts = build(cfg)
@@ -130,7 +159,8 @@ def main():
         api(cfg['controller']['rest'], 'POST', '/qos/setup', {
             'ingress_dpid': 1, 'uplink_port': s1.ports[up.intf1], 'capacity_bps': rate,
             'congestion_threshold': cfg['control']['congestion_threshold'],
-            'poll_interval': cfg['control']['poll_interval_s']})
+            'poll_interval': cfg['control']['poll_interval_s'],
+            'discovery': cfg['control'].get('discovery', 'auto'), 'class_rules': rules})
         if a.cli:
             CLI(net)
             return

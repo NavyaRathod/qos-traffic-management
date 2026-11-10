@@ -10,9 +10,12 @@ Ryu SDN controller for the QoS Traffic Management System.
     POST /qos/policy   {policy: "none"|"static"|"srtf"}
     POST /qos/reset
     GET  /qos/status
+New UDP flows (any destination port) are discovered automatically; class_rules map port ranges to
+priority / real-time class, and the sender's header carries the flow-size hint used by SRTF.
 Run:  ryu-manager controller.py
 """
 import json
+import struct
 import time
 
 from ryu.app.wsgi import ControllerBase, WSGIApplication, route
@@ -20,7 +23,7 @@ from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, set_ev_cls
 from ryu.lib import hub
-from ryu.lib.packet import ethernet, packet
+from ryu.lib.packet import ethernet, ipv4, packet, udp
 from ryu.ofproto import ofproto_v1_3
 from webob import Response
 
@@ -28,6 +31,7 @@ QOS_PRIO = 100        # priority of per-flow QoS entries
 BE_QUEUE = 4          # lowest-priority / best-effort queue
 WIRE_OVERHEAD = 42    # eth(14)+ip(20)+udp(8)
 INF = float('inf')
+HINT = struct.Struct('!IdQ')   # seq, ts, declared flow size (same header as udp_sender.py)
 
 
 class QoSController(app_manager.RyuApp):
@@ -44,7 +48,8 @@ class QoSController(app_manager.RyuApp):
         self.history = []
         self.t0 = time.time()
         self.setup = {'ingress_dpid': 1, 'uplink_port': None, 'capacity_bps': 10e6,
-                      'congestion_threshold': 0.9, 'poll_interval': 1.0}
+                      'congestion_threshold': 0.9, 'poll_interval': 1.0,
+                      'discovery': 'auto', 'class_rules': []}
         self.policies = {'none': self._p_none, 'static': self._p_static, 'srtf': self._p_srtf}
         kwargs['wsgi'].register(QoSRest, {'app': self})
         hub.spawn(self._monitor)
@@ -68,8 +73,14 @@ class QoSController(app_manager.RyuApp):
         msg = ev.msg
         dp, ofp, p = msg.datapath, msg.datapath.ofproto, msg.datapath.ofproto_parser
         in_port = msg.match['in_port']
-        eth = packet.Packet(msg.data).get_protocol(ethernet.ethernet)
+        pkt = packet.Packet(msg.data)
+        eth = pkt.get_protocol(ethernet.ethernet)
         if eth is None or eth.ethertype == 0x88cc:
+            return
+        u = pkt.get_protocol(udp.udp)
+        if (u is not None and pkt.get_protocol(ipv4.ipv4) and dp.id == self.setup['ingress_dpid']
+                and self.setup['uplink_port'] is not None and in_port != self.setup['uplink_port']):
+            self._on_new_udp(msg, dp, u, pkt, in_port)   # automatic discovery of new UDP flows
             return
         table = self.mac_to_port.setdefault(dp.id, {})
         table[eth.src] = in_port
@@ -86,6 +97,48 @@ class QoSController(app_manager.RyuApp):
         for k in self.setup:
             if k in d:
                 self.setup[k] = d[k]
+        self._install_discovery()
+
+    # ---------------- automatic flow discovery ----------------
+    def _install_discovery(self):
+        """Send the first packets of any UDP flow to the controller (any port, no pre-registration)."""
+        dp = self.dps.get(self.setup['ingress_dpid'])
+        if dp is None or self.setup['uplink_port'] is None:
+            return
+        ofp, p = dp.ofproto, dp.ofproto_parser
+        match = p.OFPMatch(eth_type=0x0800, ip_proto=17)
+        if self.setup['discovery'] == 'auto':
+            self._add(dp, QOS_PRIO - 50, match,
+                      [p.OFPActionOutput(ofp.OFPP_CONTROLLER, ofp.OFPCML_NO_BUFFER)])
+        else:
+            dp.send_msg(p.OFPFlowMod(datapath=dp, command=ofp.OFPFC_DELETE_STRICT, priority=QOS_PRIO - 50,
+                                     match=match, out_port=ofp.OFPP_ANY, out_group=ofp.OFPG_ANY))
+
+    def _classify(self, port):
+        """class_rules (set at run time over REST): first rule whose port range contains the port."""
+        for r in self.setup['class_rules']:
+            if r['ports'][0] <= port <= r['ports'][1]:
+                return '%s_%d' % (r.get('name', 'class'), port), int(r.get('priority', BE_QUEUE)), bool(r.get('realtime', False))
+        return 'udp_%d' % port, BE_QUEUE, False
+
+    def _on_new_udp(self, msg, dp, u, pkt, in_port):
+        port = u.dst_port
+        if port not in self.flows:
+            payload = pkt.protocols[-1]
+            total = None
+            if isinstance(payload, (bytes, bytearray)) and len(payload) >= HINT.size:
+                total = HINT.unpack_from(payload)[2] or None      # sender's declared flow size
+            name, prio, rt = self._classify(port)
+            self.logger.info('new flow discovered: dst_port=%d class=%s priority=%d realtime=%s size_hint=%s',
+                             port, name, prio, rt, total)
+            self.register([{'name': name, 'port': port, 'priority': prio, 'realtime': rt,
+                            'total_wire_bytes': total}])
+        ofp, p = dp.ofproto, dp.ofproto_parser
+        actions = [p.OFPActionSetQueue(self.flows[port]['queue']),
+                   p.OFPActionOutput(int(self.setup['uplink_port']))]
+        data = msg.data if msg.buffer_id == ofp.OFP_NO_BUFFER else None
+        dp.send_msg(p.OFPPacketOut(datapath=dp, buffer_id=msg.buffer_id, in_port=in_port,
+                                   actions=actions, data=data))
 
     def register(self, items):
         now = time.time()

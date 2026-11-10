@@ -2,7 +2,7 @@
 """Paced UDP traffic generator for one traffic class (run inside a Mininet host)."""
 import argparse, json, socket, struct, time
 
-HDR = struct.Struct('!Id')  # seq, send timestamp
+HDR = struct.Struct('!IdQ')  # seq, send timestamp, declared flow size on the wire (0 = unknown)
 
 ap = argparse.ArgumentParser()
 ap.add_argument('--dst', required=True)
@@ -19,7 +19,8 @@ a = ap.parse_args()
 time.sleep(a.delay)
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 interval = a.size * 8 / (a.rate_kbps * 1000.0)
-pad = b'\0' * (a.size - HDR.size)
+pad = b'\0' * (a.size - HDR.size)   # --size must be >= 20
+total_wire = a.packets * (a.size + 42) if a.packets else 0
 t_start = time.time()
 nxt, seq = t_start, 0
 while True:
@@ -31,7 +32,7 @@ while True:
     if now < nxt:
         time.sleep(nxt - now)
     try:
-        sock.sendto(HDR.pack(seq, time.time()) + pad, (a.dst, a.port))
+        sock.sendto(HDR.pack(seq, time.time(), total_wire) + pad, (a.dst, a.port))
     except OSError:
         pass
     seq += 1

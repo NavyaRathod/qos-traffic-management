@@ -2,7 +2,7 @@
 """Receives all traffic classes on the server; writes per-packet logs on SIGTERM."""
 import argparse, csv, os, selectors, signal, socket, struct, sys, time
 
-HDR = struct.Struct('!Id')
+HDR = struct.Struct('!IdQ')
 
 ap = argparse.ArgumentParser()
 ap.add_argument('--ports', type=int, nargs='+', required=True)
@@ -37,5 +37,5 @@ while True:
             pkt, _addr = key.fileobj.recvfrom(4096)
         except BlockingIOError:
             continue
-        seq, ts = HDR.unpack_from(pkt)
+        seq, ts, _ = HDR.unpack_from(pkt)
         data[key.data].append((seq, ts, time.time(), len(pkt)))

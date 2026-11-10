@@ -15,6 +15,18 @@ Mininet + Ryu (OpenFlow 1.3) + Open vSwitch HTB queues.
 
 Useful: `--only srtf`, `--bottleneck 5`, `--run-time 30`, `--cli`.
 
+## Dynamic traffic classes and destination ports
+- `generator.py` creates the flows at run time: random destination ports (inside each profile's port range),
+  packet sizes, rates, start times and flow sizes. Profiles live in `config.json -> generator`.
+      sudo python3 topology.py --flows 10 --seed 3      # 10 random flows, reproducible with the seed
+  Same seed = same flows in every experiment, so policies are compared fairly. Generated flows are saved in
+  `results/generated_classes.json`.
+- The controller needs NO port list. The first packet of any new UDP flow is sent to the controller, which
+  classifies it by port-range rules (`class_rules`, changeable over REST), reads the flow-size hint from the
+  packet header (used by SRTF), installs the queue rule and keeps monitoring it. Watch the controller log for
+  `new flow discovered: dst_port=...`.
+- Old behaviour (pre-registered flows): set `"discovery": "preregister"` in config.json.
+
 ## What is dynamic now (not hardcoded)
 - Classes, ports, packet sizes, rates, start times, finite flow sizes, bottleneck, queue shares,
   experiments: all in `config.json`.
