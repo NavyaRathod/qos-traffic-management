@@ -1,33 +1,46 @@
-#QoS Traffic Management using UDP and SDN
+# QoS Traffic Management using UDP and SDN
+
 ## Project Overview
-This project sends UDP traffic between Mininet hosts and uses an SDN controller to classify and prioritize traffic
+
+This project sends UDP traffic between Mininet hosts and uses an SDN controller
+to classify and prioritize traffic.
+
 ## Components
-UDP client and server
-Ryu SDN controller
-Mininet topology with h1, h2, and s1
-## How to Run
-strart the Ryu controller:
-`ryu-manager ~/qos-traffic-management/controller/qos_controller.py`
-In another terminal, start Mininet:
-`sudo mn --switch ovs,protocols=OpenFlow13 --controller=remote,ip=127.0.0.1,port=6633`
-At the Mininet prompt, check connectivity:
-`pingall`
+
+- UDP traffic application
+- Ryu SDN controller
+- Mininet topology
+
+## Run the project
+
+Start the Ryu controller:
+
+```sh
+ryu-manager ~/qos-traffic-management/controller/qos_controller.py
+```
+
+In another terminal, start the project topology with the same controller port:
+
+```sh
+sudo python3 ~/qos-traffic-management/topology/topology.py --controller-port 6633
+```
+
+## UDP Traffic Application
+
+The app generates, receives, classifies, and measures UDP traffic. See
+[`app/README.md`](app/README.md) for traffic classes, packet format, Mininet
+commands, tests, and measurement details.
 
 ## Topology and Test
-Merge Member 2 Mininet topology and D1 test documentation.
-Topology: Mininet h1-s1-h2, OpenFlow 1.3, Ryu controller.
-Connectivity test: pingall passed.
-UDP test : client sent 100 packets to h2 port 5004; server received 100 packets (1900 bytes).
 
-## Reproduce UDP Classification Tests
-Controller: souce ~/project5/venv/bin/activate; ryu-manager ~/qos-traffic-management/controller/qos_controller.py
-Mininet: sudo mn --switch ovs,protocols=OpenFlow13 --controller=remote,ip=127.0.0.1,port=6633
-In Mininet, start the server on h2: h2 python3 /home/student/qos-traffic-management/app/server.py --port PORT &
-Then run the client on h1: h1 python3 /home/student/qos-traffic-management/app/clent.py --host 10.0.0.2 --port PORT --rate 20 --seconds5
-Repeat with PORT 5004 (HIGH, priority 100), 5001 (MEDIUM priority 50), and 5007 (LOW/default, priority 10).
-Inspent installed rules: sh ovs-ofctl -O OpenFlow13 dump-flows s1
-Controller mapping: UDP 5004-5005 HIGH (100); 5001-5003 MEDIUM (50); other UDP LOW (10).
-cat >> REANDME.md << 'EOF'
+The topology uses an OpenFlow 1.3 switch and Ryu controller. The recorded
+baseline connectivity test (`pingall`) passed. A historical UDP test sent 100
+packets to h2 port 5004; the server received 100 packets (1900 bytes). For
+current app port and controller mappings, see [`app/README.md`](app/README.md).
+
 ## Deliverable 2: Dynamic QoS with SRTF
-Random traffic classes and destination ports, automatic flow discovery in the Ryu controller,congestion-aware policies (none / static / SRTF) switchable at runtime via REST, and automated analysis.
-See `deliverable2/README.md`.
+
+Random traffic classes and destination ports, automatic flow discovery in the
+Ryu controller, congestion-aware policies (none / static / SRTF) switchable at
+runtime via REST, and automated analysis. See
+[`deliverable2/README.md`](deliverable2/README.md).
